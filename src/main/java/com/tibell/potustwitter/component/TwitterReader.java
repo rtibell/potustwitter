@@ -18,8 +18,8 @@ import software.amazon.awssdk.services.s3.model.*;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.util.Hashtable;
 import java.util.List;
-import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -31,24 +31,26 @@ public class TwitterReader {
     private final Region region = Region.EU_CENTRAL_1;
 
     private Twitter twitter;
-
-    String user;
-    long maxId;
-    long minId;
+    private Hashtable<Long, Boolean> tweetHT;
+    private String user;
+    private long prevSavedId = Long.MAX_VALUE;
+    private int nrFiles;
+    private String lastKey;
+    private ComprehendClientBuilder comprehendClientBuilder;
+    private ComprehendClient comprehendClient;
 
     public TwitterReader(SocialProperties socProp, AWSProperties awsProp, String user) {
         this.socProp = socProp;
         this.awsProp = awsProp;
         this.user = user;
-        this.maxId = 1;
-        this.minId = Long.MAX_VALUE;
+        this.tweetHT = new Hashtable<Long,Boolean>();
         logger.info("Twitter props -- " + socProp.toString());
         this.twitter = new TwitterTemplate(socProp.getConsumerKey(), socProp.getConsumerSecret(), socProp.getAccessToken(), socProp.getAccessTokenSecret());
+        comprehendClientBuilder = ComprehendClient.builder();
+        comprehendClient = comprehendClientBuilder.build();
         s3 = S3Client.builder().region(region).build();
 
-        System.out.println("min " + this.minId + " max " + this.maxId);
         listTweetBucket();
-        System.out.println("min " + this.minId + " max " + this.maxId);
     }
 
     public void getInitialList() {
@@ -58,8 +60,8 @@ public class TwitterReader {
 
     public void getNextList(int nrEntrys) {
         int entrys = Math.min(nrEntrys,200);
-        logger.info("at getNextList(" + user + ") from " + minId);
-        procTweet(twitter.timelineOperations().getUserTimeline(user, entrys, 1l, minId));
+        logger.info("at getNextList(" + user + ") from " + prevSavedId);
+        procTweet(twitter.timelineOperations().getUserTimeline(user, entrys, 1l, prevSavedId));
     }
 
     public void procTweet(List<Tweet> tweets) {
@@ -67,10 +69,10 @@ public class TwitterReader {
     }
 
     public void saveTweetToS3(Tweet tweet) {
-        if (tweet.getId() <= this.maxId && tweet.getId() >= this.minId) {
+        if (this.tweetHT.containsKey(new Long(tweet.getId())))  {
             return;
         }
-
+        prevSavedId = Math.min(prevSavedId, tweet.getId());
         String shard = randomAlphaNumeric(6);
         String key = awsProp.getS3MapName() + "/" + shard + "_" + tweet.getIdStr() + ".txt";
         logger.info("Save tweet to S3 with key " + key);
@@ -91,17 +93,25 @@ public class TwitterReader {
 
     public void listTweetBucket() {
         // List objects
-        ListObjectsRequest listObjectsRequest = ListObjectsRequest.builder().bucket(awsProp.getS3BucketName()).build();
-        ListObjectsResponse listObjectsResponse = s3.listObjects(listObjectsRequest);
-        listObjectsResponse.contents().stream().forEach(x -> setLatestIds(x.key()));
-
-//        ListBucketsRequest listBucketsRequest = ListBucketsRequest.builder().build();
-//        ListBucketsResponse listBucketsResponse = s3.listBuckets(listBucketsRequest);
-//        listBucketsResponse.buckets().stream().forEach(x -> System.out.println(x.name()));
+        ListObjectsV2Request listObjectsV2Request = ListObjectsV2Request.builder().bucket(awsProp.getS3BucketName()).prefix(awsProp.getS3MapName()).build();
+        ListObjectsV2Response listObjectsV2Response;
+        String nextToken;
+        do {
+            listObjectsV2Response = s3.listObjectsV2(listObjectsV2Request);
+//            listObjectsResponse.contents().
+//                    stream().filter(x -> x.key().startsWith(awsProp.getS3MapName())).
+//                    forEach(x -> { setLatestIds(x.key());});
+            List<S3Object> objectList = listObjectsV2Response.contents();
+            for (S3Object s3Object : objectList) setLatestIds(s3Object.key());
+            nextToken = listObjectsV2Response.nextContinuationToken();
+            if (nextToken == null || nextToken.length() == 0) nextToken = lastKey;
+            listObjectsV2Request = ListObjectsV2Request.builder().bucket(awsProp.getS3BucketName()).prefix(awsProp.getS3MapName()).continuationToken(nextToken).build();
+        } while (listObjectsV2Response.isTruncated());
     }
 
     public void setLatestIds(String st) {
-        System.out.println(st);
+        this.nrFiles++;
+        System.out.println(st + " files " + this.nrFiles);
         String patString = awsProp.getS3MapName() + "/([a-z]*)_([0-9]*)\\.txt";
         //System.out.println(patString);
         Pattern pat = Pattern.compile(patString);
@@ -110,14 +120,17 @@ public class TwitterReader {
             System.out.println(match.group(2));
             long id = Long.parseLong(match.group(2));
             setId(id);
+            this.lastKey = match.group(2);
+        } else {
+            logger.info("Missmatch " + st);
         }
     }
 
     public Sentiment comprehendTweet(Tweet tweet, String key) {
-        ComprehendClientBuilder bulder = ComprehendClient.builder();
-        ComprehendClient cc = bulder.build();
+        //ComprehendClientBuilder comprehendClientBuilder = ComprehendClient.builder();
+        //ComprehendClient comprehendClient = comprehendClientBuilder.build();
         DetectSentimentRequest request = DetectSentimentRequest.builder().languageCode(LanguageCode.EN).text(tweet.getText()).build();
-        DetectSentimentResponse response = cc.detectSentiment(request);
+        DetectSentimentResponse response = comprehendClient.detectSentiment(request);
         SentimentType type = response.sentiment();
         logger.info("Sentiment type: " + type.toString());
         SentimentScore score = response.sentimentScore();
@@ -130,8 +143,9 @@ public class TwitterReader {
     }
 
     private void setId(long id) {
-        minId = Math.min(minId, id);
-        maxId = Math.max(maxId, id);
+        Long idObj = new Long(id);
+        if (!this.tweetHT.containsKey(idObj)) this.tweetHT.put(idObj, Boolean.TRUE);
+        else prevSavedId = Math.min(prevSavedId, id);
     }
 
 
