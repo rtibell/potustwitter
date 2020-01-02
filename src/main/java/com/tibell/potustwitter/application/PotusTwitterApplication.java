@@ -50,7 +50,7 @@ public class PotusTwitterApplication {
         logger.info("Get initial");
         twr.getInitialList();
 
-        for (int i = 0; i < 15; i++) {
+        for (int i = 0; i < 10; i++) {
             logger.info("Get 200 at " + i);
             twr.getNextList(200);
         }

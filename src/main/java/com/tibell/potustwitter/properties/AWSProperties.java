@@ -1,6 +1,7 @@
 package com.tibell.potustwitter.properties;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
 import org.springframework.stereotype.Component;
 import org.springframework.validation.annotation.Validated;
@@ -9,7 +10,8 @@ import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 
 @Component
-@PropertySource("classpath:aws.properties")
+@Configuration
+//@PropertySource("classpath:aws.properties")
 @ConfigurationProperties(prefix = "aws")
 @Validated
 public class AWSProperties {

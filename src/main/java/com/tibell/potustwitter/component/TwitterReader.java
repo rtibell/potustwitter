@@ -14,12 +14,14 @@ import org.slf4j.LoggerFactory;
 import org.springframework.social.twitter.api.Tweet;
 import org.springframework.social.twitter.api.Twitter;
 import org.springframework.social.twitter.api.impl.TwitterTemplate;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.*;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class TwitterReader {
     private static Logger logger = LoggerFactory.getLogger(TwitterReader.class);
@@ -43,6 +45,10 @@ public class TwitterReader {
         logger.info("Twitter props -- " + socProp.toString());
         this.twitter = new TwitterTemplate(socProp.getConsumerKey(), socProp.getConsumerSecret(), socProp.getAccessToken(), socProp.getAccessTokenSecret());
         s3 = S3Client.builder().region(region).build();
+
+        System.out.println("min " + this.minId + " max " + this.maxId);
+        listTweetBucket();
+        System.out.println("min " + this.minId + " max " + this.maxId);
     }
 
     public void getInitialList() {
@@ -61,6 +67,10 @@ public class TwitterReader {
     }
 
     public void saveTweetToS3(Tweet tweet) {
+        if (tweet.getId() <= this.maxId && tweet.getId() >= this.minId) {
+            return;
+        }
+
         String shard = randomAlphaNumeric(6);
         String key = awsProp.getS3MapName() + "/" + shard + "_" + tweet.getIdStr() + ".txt";
         logger.info("Save tweet to S3 with key " + key);
@@ -77,6 +87,30 @@ public class TwitterReader {
                         .build(),
                 RequestBody.fromByteBuffer(bb));
 
+    }
+
+    public void listTweetBucket() {
+        // List objects
+        ListObjectsRequest listObjectsRequest = ListObjectsRequest.builder().bucket(awsProp.getS3BucketName()).build();
+        ListObjectsResponse listObjectsResponse = s3.listObjects(listObjectsRequest);
+        listObjectsResponse.contents().stream().forEach(x -> setLatestIds(x.key()));
+
+//        ListBucketsRequest listBucketsRequest = ListBucketsRequest.builder().build();
+//        ListBucketsResponse listBucketsResponse = s3.listBuckets(listBucketsRequest);
+//        listBucketsResponse.buckets().stream().forEach(x -> System.out.println(x.name()));
+    }
+
+    public void setLatestIds(String st) {
+        System.out.println(st);
+        String patString = awsProp.getS3MapName() + "/([a-z]*)_([0-9]*)\\.txt";
+        //System.out.println(patString);
+        Pattern pat = Pattern.compile(patString);
+        Matcher match = pat.matcher(st);
+        if (match.matches()) {
+            System.out.println(match.group(2));
+            long id = Long.parseLong(match.group(2));
+            setId(id);
+        }
     }
 
     public Sentiment comprehendTweet(Tweet tweet, String key) {
@@ -96,7 +130,7 @@ public class TwitterReader {
     }
 
     private void setId(long id) {
-        minId = Math.min(maxId, id);
+        minId = Math.min(minId, id);
         maxId = Math.max(maxId, id);
     }
 
