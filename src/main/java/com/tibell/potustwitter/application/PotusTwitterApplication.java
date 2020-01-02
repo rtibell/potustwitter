@@ -14,6 +14,7 @@ import org.springframework.context.annotation.ComponentScan;
 
 import javax.annotation.PostConstruct;
 
+@SuppressWarnings("ALL")
 @SpringBootApplication
 @ComponentScan({"com.tibell.potustwitter.application", "com.tibell.potustwitter.config", "com.tibell.potustwitter.properties"})
 @ConfigurationPropertiesScan({"com.tibell.potustwitter.properties"})
@@ -50,7 +51,7 @@ public class PotusTwitterApplication {
         logger.info("Get initial");
         twr.getInitialList();
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 16; i++) {
             logger.info("Get 200 at " + i);
             twr.getNextList(200);
         }
