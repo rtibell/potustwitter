@@ -14,4 +14,10 @@ git commit
 
 ## Push feature branch to remote
 git push -u origin delta-fetch-feature
- 
+
+## Merging
+git checkout master
+git pull origin master
+git merge --squash test
+git commit
+git push origin master 
